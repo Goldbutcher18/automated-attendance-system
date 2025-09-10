@@ -130,9 +130,7 @@ def teacher_view(user):
                 for _, row in absentees.iterrows():
                     send_email(row["email"], "Attendance Alert", f"Dear {row['name']}, you missed session {s['id']}.")
                 st.success(f"Emails sent to {len(absentees)} absentees.")
-                """
-
-"""
+               """
 Streamlit UI/UX Template for "Smart Attendance" (Bharti Vidyapeeth)
 - Clean layout, colors, accessible typography
 - Sidebar navigation, cards, metrics, tables, QR preview
