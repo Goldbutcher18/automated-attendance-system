@@ -132,181 +132,305 @@ def teacher_view(user):
                 st.success(f"Emails sent to {len(absentees)} absentees.")
                 """
 
+"""
+Streamlit UI/UX Template for "Smart Attendance" (Bharti Vidyapeeth)
+- Clean layout, colors, accessible typography
+- Sidebar navigation, cards, metrics, tables, QR preview
+- Lightweight: SQLite + Pillow + qrcode optional (you can remove qrcode if not needed)
+- Meant to be a UI/UX layer — wire your backend functions where noted.
+"""
+
 import streamlit as st
 import sqlite3
-import pandas as pd
-import qrcode
 from io import BytesIO
-from datetime import datetime
-from PIL import Image
+from datetime import datetime, timedelta
+from PIL import Image, ImageDraw, ImageFont
+import qrcode
+import pandas as pd
 
-# ---------------- Page Setup ----------------
-st.set_page_config(
-    page_title="Smart Attendance | Bharti Vidyapeeth",
-    layout="wide",
-    page_icon="🎓"
-)
+# ---------- Page config & branding ----------
+st.set_page_config(page_title="Smart Attendance – Bharti Vidyapeeth",
+                   layout="wide",
+                   page_icon="🎓")
 
-# ---------------- Custom CSS ----------------
-st.markdown("""
+# BRAND COLORS (Bharti Vidyapeeth inspired)
+PRIMARY = "#E85A0C"   # orange
+SECONDARY = "#003366" # deep blue
+BG = "#F7F7F8"
+CARD = "#FFFFFF"
+
+# ---------- Inject small CSS for nicer visuals ----------
+st.markdown(f"""
 <style>
-/* Background */
-.main {
-    background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
-    font-family: 'Segoe UI', sans-serif;
-}
+/* Page background */
+.reportview-container .main {{
+  background-color: {BG};
+}}
 
 /* Sidebar */
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0f4c75, #3282b8);
-    color: white;
-}
-[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-    color: white;
-}
+[data-testid="stSidebar"] {{
+  background: linear-gradient(180deg, {SECONDARY}, #1b4b72);
+  color: white;
+}}
 
 /* Title */
-h1, h2, h3 {
-    font-weight: 700;
-    color: #0f4c75;
-}
+h1 {{
+  color: {SECONDARY};
+}}
 
-/* Glassmorphism Cards */
-.card {
-    background: rgba(255, 255, 255, 0.65);
-    border-radius: 16px;
-    padding: 20px;
-    margin: 10px 0;
-    backdrop-filter: blur(12px) saturate(180%);
-    -webkit-backdrop-filter: blur(12px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-}
+/* Cards */
+.card {{
+  background: {CARD};
+  padding: 18px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}}
 
 /* Buttons */
-.stButton>button {
-    background: linear-gradient(90deg, #3282b8, #0f4c75);
-    color: white;
-    border-radius: 8px;
-    padding: 0.6rem 1.2rem;
-    border: none;
-    font-weight: bold;
-}
-.stButton>button:hover {
-    background: linear-gradient(90deg, #0f4c75, #3282b8);
-}
+.stButton>button {{
+  border-radius: 8px;
+}}
 
-/* Footer */
-.footer {
-    text-align: center;
-    padding: 15px;
-    color: #666;
-    font-size: 13px;
-}
+/* Small utility */
+.small-muted {{ color: #666666; font-size:12px; }}
 </style>
 """, unsafe_allow_html=True)
 
+# ---------- Simple DB helpers (demo data) ----------
+DB = "ui_demo.db"
 
-# ---------------- Database ----------------
 def get_conn():
-    conn = sqlite3.connect("attendance_ui.db", check_same_thread=False)
+    conn = sqlite3.connect(DB, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
     return conn
 
-def init_db():
+def init_demo_db():
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS attendance (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 name TEXT,
-                 email TEXT,
-                 role TEXT,
-                 date TEXT,
-                 status TEXT)""")
+    cur = conn.cursor()
+    # users table (very small demo)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        email TEXT,
+        role TEXT
+    );
+    """)
+    # attendance
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS attendance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        date TEXT,
+        status TEXT
+    );
+    """)
+    # seed demo users if none
+    cur.execute("SELECT COUNT(*) as n FROM users")
+    if cur.fetchone()["n"] == 0:
+        demo = [
+            ("Amit Kumar","amit@bv.edu","student"),
+            ("Priya Sharma","priya@bv.edu","student"),
+            ("Dr. R. Rao","rao@bv.edu","teacher"),
+        ]
+        cur.executemany("INSERT INTO users(name,email,role) VALUES(?,?,?)", demo)
     conn.commit()
     conn.close()
 
-init_db()
+# initialize demo DB
+init_demo_db()
 
-# ---------------- QR Generator ----------------
-def generate_qr(data: str):
-    qr = qrcode.QRCode(box_size=8, border=2)
-    qr.add_data(data)
+# ---------- Helper UI components ----------
+def page_header(title, subtitle=None, help_text=None):
+    col1, col2 = st.columns([0.8, 0.2])
+    with col1:
+        st.markdown(f"## {title}")
+        if subtitle:
+            st.markdown(f"<div class='small-muted'>{subtitle}</div>", unsafe_allow_html=True)
+    with col2:
+        if help_text:
+            st.info(help_text)
+
+def profile_card(name="User", role="student", email="user@example.com"):
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    cols = st.columns([1,3])
+    with cols[0]:
+        # simple avatar: colored circle with initials
+        initials = "".join([p[0] for p in name.split()][:2]).upper()
+        avatar = Image.new("RGB", (96,96), color=PRIMARY)
+        draw = ImageDraw.Draw(avatar)
+        draw.text((20,25), initials, fill="white")
+        st.image(avatar, width=96)
+    with cols[1]:
+        st.markdown(f"### {name}")
+        st.markdown(f"**{role.title()}** • {email}")
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        st.button("Sign out")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+def small_metric(label, value, delta=None):
+    if delta is not None:
+        st.metric(label, value, delta)
+    else:
+        st.metric(label, value)
+
+def generate_qr_image(text: str, size=260):
+    qr = qrcode.QRCode(box_size=10, border=2)
+    qr.add_data(text)
     qr.make(fit=True)
-    img = qr.make_image(fill="black", back_color="white")
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    return buf
+    img = qr.make_image(fill_color="black", back_color="white")
+    # resize cleanly
+    img = img.resize((size, size))
+    return img
 
-# ---------------- Sidebar ----------------
+# ---------- Sidebar with navigation ----------
 st.sidebar.image("https://upload.wikimedia.org/wikipedia/en/f/f4/Bharati_Vidyapeeth_Deemed_University_logo.png", width=150)
-st.sidebar.title("📌 Navigation")
-page = st.sidebar.radio("Go to", ["🏠 Dashboard", "📝 Mark Attendance", "📊 Reports", "⚙️ Admin"])
 st.sidebar.markdown("---")
-st.sidebar.info("Smart Attendance System\nBharti Vidyapeeth (Deemed to be University)")
+st.sidebar.markdown("### Navigation")
+page = st.sidebar.radio("", ["Dashboard", "Mark Attendance", "Sessions", "Reports", "Admin & Settings"])
+st.sidebar.markdown("---")
+st.sidebar.markdown("#### Quick actions")
+st.sidebar.button("New Session")
+st.sidebar.button("Export CSV")
+st.sidebar.markdown("---")
+st.sidebar.markdown("Made with ❤️ by Bharti Vidyapeeth")
 
-# ---------------- Pages ----------------
-if page == "🏠 Dashboard":
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("## 🎓 Smart Attendance Dashboard")
-    st.write("Welcome to the Smart Attendance System for **Bharti Vidyapeeth (Deemed to be University)**.")
-    st.write("Track attendance, generate session QR codes, and monitor reports in real time.")
-    st.markdown("</div>", unsafe_allow_html=True)
+# ---------- Main UI (pages) ----------
+if page == "Dashboard":
+    page_header("Dashboard", subtitle="Overview of today's attendance", help_text="Shows summary metrics and recent activity.")
+    # top metrics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        small_metric("Total Students", "120")
+    with col2:
+        small_metric("Present Today", "102", delta="+6")
+    with col3:
+        small_metric("Absent Today", "18", delta="-6")
+    with col4:
+        small_metric("Ongoing Sessions", "1")
 
-elif page == "📝 Mark Attendance":
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("## 📝 Mark Attendance")
+    st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
 
-    name = st.text_input("Enter your full name")
-    email = st.text_input("Enter your college email")
-    role = st.selectbox("Role", ["Student", "Teacher"])
-    status = st.selectbox("Attendance Status", ["Present", "Absent", "Late"])
-
-    if st.button("✅ Submit Attendance"):
-        conn = get_conn()
-        c = conn.cursor()
-        c.execute("INSERT INTO attendance(name,email,role,date,status) VALUES (?,?,?,?,?)",
-                  (name, email, role, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), status))
-        conn.commit()
-        conn.close()
-        st.success("Attendance recorded successfully!")
-
-    st.markdown("### 📷 QR Code for Session")
-    session_data = f"{name}-{email}-{role}-{datetime.now()}"
-    qr_img = generate_qr(session_data)
-    st.image(qr_img, width=220)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-elif page == "📊 Reports":
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("## 📊 Attendance Reports")
+    # recent attendance table (pull from demo DB)
     conn = get_conn()
-    df = pd.read_sql("SELECT * FROM attendance", conn)
+    df = pd.read_sql_query("""
+        SELECT a.id, u.name as student, a.date, a.status
+        FROM attendance a LEFT JOIN users u ON u.id=a.user_id
+        ORDER BY a.date DESC LIMIT 10
+    """, conn)
     conn.close()
 
+    st.markdown("### Recent attendance")
     if df.empty:
-        st.info("No attendance data yet.")
+        st.info("No attendance recorded yet. Use 'Mark Attendance' or create a session.")
     else:
         st.dataframe(df)
-        csv = df.to_csv(index=False).encode()
-        st.download_button("⬇️ Download Report as CSV", csv, "attendance_report.csv", "text/csv")
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
-elif page == "⚙️ Admin":
+    # annoucement card
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("## ⚙️ Admin Panel")
-    st.write("Manage system settings and monitor database records.")
+    st.markdown("### Announcements")
+    st.write("- Demo Mode: This is a UI mockup. Connect your backend to save real data.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    conn = get_conn()
-    df = pd.read_sql("SELECT * FROM attendance", conn)
-    conn.close()
-    st.metric("Total Records", len(df))
-    st.metric("Unique Students", df['email'].nunique() if not df.empty else 0)
+elif page == "Mark Attendance":
+    page_header("Mark Attendance", subtitle="Quickly mark your attendance or scan a session QR.")
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    cols = st.columns([2,1])
+    with cols[0]:
+        st.markdown("#### Student Quick Mark")
+        email = st.text_input("Enter your college email")
+        choice = st.selectbox("Status", ["Present", "Late", "Absent"])
+        if st.button("Mark My Attendance"):
+            # demo: find user and add attendance row
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM users WHERE email=?", (email.strip(),))
+            row = cur.fetchone()
+            if row:
+                cur.execute("INSERT INTO attendance(user_id,date,status) VALUES(?,?,?)",
+                            (row["id"], datetime.utcnow().strftime("%Y-%m-%d"), choice))
+                conn.commit()
+                st.success("Marked successfully ✅")
+            else:
+                st.error("Email not found — please register with admin.")
+            conn.close()
+    with cols[1]:
+        st.markdown("#### QR Session (demo)")
+        sample_payload = "AATT://SID=123;COURSE=CS101;CODE=ABC123"
+        qr_img = generate_qr_image(sample_payload)
+        buf = BytesIO()
+        qr_img.save(buf, format="PNG")
+        st.image(buf.getvalue(), width=200)
+        st.caption("Show this QR on projector for students to scan.")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ---------------- Footer ----------------
-st.markdown("<div class='footer'>© 2025 Bharti Vidyapeeth (Deemed to be University) | Smart Attendance System</div>", unsafe_allow_html=True)
+elif page == "Sessions":
+    page_header("Sessions", subtitle="Create or manage live attendance sessions.")
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    with st.form("new_session"):
+        st.markdown("### Create new session")
+        course_code = st.text_input("Course Code", value="CS101")
+        ttl = st.number_input("Session duration (minutes)", min_value=5, max_value=180, value=20)
+        require_face = st.checkbox("Require face check (not implemented in demo)", value=False)
+        geo = st.checkbox("Enable geofence (not implemented in demo)", value=False)
+        if st.form_submit_button("Start session"):
+            # In production: create session record and generate QR payload
+            payload = f"AATT://SID={int(datetime.utcnow().timestamp())};COURSE={course_code};CODE={base36 := 'AB' + '1'}"
+            st.success("Session started")
+            st.image(generate_qr_image(payload), width=240)
+            st.markdown(f"**Code:** `{payload.split('CODE=')[-1]}`")
+    st.markdown("</div>", unsafe_allow_html=True)
 
+elif page == "Reports":
+    page_header("Reports", subtitle="Download attendance reports and analytics.")
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    # Simple filter and CSV export
+    conn = get_conn()
+    df_all = pd.read_sql_query("""
+        SELECT a.id, u.name as student, u.email, a.date, a.status
+        FROM attendance a LEFT JOIN users u ON u.id=a.user_id
+        ORDER BY a.date DESC
+    """, conn)
+    conn.close()
+    st.markdown("### Filters")
+    cols = st.columns([3,1,1])
+    with cols[0]:
+        name_q = st.text_input("Student name contains")
+    with cols[1]:
+        date_from = st.date_input("From", value=datetime.utcnow().date() - timedelta(days=30))
+    with cols[2]:
+        date_to = st.date_input("To", value=datetime.utcnow().date())
+    mask = (df_all['date'] >= date_from.strftime("%Y-%m-%d")) & (df_all['date'] <= date_to.strftime("%Y-%m-%d"))
+    if name_q:
+        mask &= df_all['student'].str.contains(name_q, case=False, na=False)
+    df_filtered = df_all[mask]
+    st.dataframe(df_filtered)
+    csv = df_filtered.to_csv(index=False).encode()
+    st.download_button("Download CSV", csv, file_name="attendance_report.csv")
+    st.markdown("</div>", unsafe_allow_html=True)
 
+elif page == "Admin & Settings":
+    page_header("Admin & Settings", subtitle="Manage users, courses, and app settings.")
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.markdown("### Users")
+    conn = get_conn()
+    users = pd.read_sql_query("SELECT id,name,email,role FROM users ORDER BY name", conn)
+    conn.close()
+    st.dataframe(users)
+    with st.expander("Add demo user"):
+        nm = st.text_input("Name", key="adm_name")
+        em = st.text_input("Email", key="adm_email")
+        rr = st.selectbox("Role", ["student","teacher","admin"], key="adm_role")
+        if st.button("Add user"):
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("INSERT INTO users(name,email,role) VALUES(?,?,?)", (nm,em,rr))
+            conn.commit()
+            conn.close()
+            st.success("User added. Refresh the page to see the change.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
+# ---------- Footer ----------
+st.markdown("<br><hr>", unsafe_allow_html=True)
+st.markdown(f"<div class='small-muted'>© {datetime.utcnow().year} Bharti Vidyapeeth (Deemed to be University) • Demo UI/UX</div>", unsafe_allow_html=True)
