@@ -149,12 +149,14 @@ st.set_page_config(
 
 # ---------------- Custom CSS ----------------
 st.markdown("""
+st.markdown("""
 <style>
 /* Background */
 .main {
     background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
-    font-family: 'Segoe UI', sans-serif;
 }
+</style>
+""", unsafe_allow_html=True)
 
 /* Sidebar */
 [data-testid="stSidebar"] {
@@ -306,4 +308,5 @@ elif page == "⚙️ Admin":
 
 # ---------------- Footer ----------------
 st.markdown("<div class='footer'>© 2025 Bharti Vidyapeeth (Deemed to be University) | Smart Attendance System</div>", unsafe_allow_html=True)
+
 
